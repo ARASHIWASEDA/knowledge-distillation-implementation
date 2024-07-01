@@ -9,7 +9,7 @@ class BaseDistiller(nn.Module):
         self.criterion = criterion
         self.args = args
 
-    def forward(self, x):
+    def forward(self, image, label):
         raise NotImplementedError
 
     def compute_parameters(self):

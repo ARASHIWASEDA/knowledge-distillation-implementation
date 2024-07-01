@@ -3,6 +3,7 @@ import yaml
 import os
 import logging
 from datetime import datetime
+from collections import defaultdict
 
 import torch
 import torch.nn as nn
@@ -11,6 +12,7 @@ import torchvision.datasets as datasets
 import torchvision.transforms as transform
 
 from timm.utils.log import setup_default_logging
+from timm.utils.metrics import AverageMeter, accuracy
 from timm.utils.summary import get_outdir
 from timm.utils.checkpoint_saver import CheckpointSaver
 from timm.models import create_model, load_checkpoint
@@ -44,55 +46,69 @@ parser.add_argument("--kd-temperature", default=4., type=float, help='distillati
 parser.add_argument("--kd-loss-weight", default=1., type=float)
 parser.add_argument("--gt-loss-weight", default=1., type=float)
 
+# DKD settings
+parser.add_argument("--dkd-alpha", default=1., type=float)
+parser.add_argument("--dkd-beta", default=1., type=float)
+
 
 def train(epoch, distiller, loader, optimizer, args, device, total_iters):
-    correct = 0
-    total = 0
+    loss_meter = AverageMeter()
+    top1_meter = AverageMeter()
+    top5_meter = AverageMeter()
+    loss_gt_meter = AverageMeter()
+    loss_kd_meter = AverageMeter()
+    losses_meter_dict = defaultdict(AverageMeter)
     distiller.train()
     for batch_idx, (images, labels) in enumerate(loader):
         image = images.to(device)
         labels = labels.to(device)
         logits_student, losses_dict = distiller(image, labels)
         loss = sum(losses_dict.values())
-        preds = torch.argmax(logits_student.detach(), dim=1)
-        correct += (preds == labels).sum()
-        total += preds.shape[0]
-        acc = 100.0 * correct / total
-        if batch_idx % args.log_interval == 0 or batch_idx == total_iters - 1:
-            losses_infos = []
-            for k, v in losses_dict.items():
-                info = f'{k.capitalize()} - {v.item():.4f}'
-                losses_infos.append(info)
-            losses_info = '  '.join(losses_infos)
-            _logger.info(
-                f'Train-{epoch}: [{batch_idx}/{total_iters}], '
-                f'Loss: {losses_info}, Acc: {acc:.2f}'
-            )
+        top1, top5 = accuracy(logits_student.detach(), labels, topk=(1, 5))
+        top1_meter.update(top1.item(), image.size(0))
+        top5_meter.update(top5.item(), image.size(0))
+
+        loss_meter.update(loss.item(), image.size(0))
+        for k in losses_dict:
+            losses_meter_dict[k].update(losses_dict[k].item(), image.size(0))
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
+        if batch_idx % args.log_interval == 0 or batch_idx == total_iters - 1:
+            losses_info = []
+            for k, v in losses_meter_dict.items():
+                info = f'{k.capitalize()}: {v.avg:.4f}'
+            losses_info = '  '.join(losses_info)
+            _logger.info(
+                f'Train-{epoch}: [{batch_idx}/{total_iters}], '
+                f'Loss: {loss_meter.avg:.4f} {losses_info}, '
+                f'Acc@1: {top1_meter.avg:.2f} Acc@5: {top5_meter.avg:.2f}'
+            )
+
 
 def eval(epoch, model, loader, args, device, total_iters, loss_func, saver):
+    loss_meter = AverageMeter()
+    top1_meter = AverageMeter()
+    top5_meter = AverageMeter()
     with torch.no_grad():
         model.eval()
-        correct = 0
-        total = 0
         for batch_idx, (image, labels) in enumerate(loader):
             image = image.to(device)
             labels = labels.to(device)
             preds = model(image)
             loss = loss_func(preds, labels)
-            pred_labels = torch.argmax(preds, dim=1)
-            correct += (pred_labels == labels).sum()
-            total += pred_labels.shape[0]
-            acc = 100.0 * correct / total
+            top1, top5 = accuracy(preds, labels, topk=(1, 5))
+            loss_meter.update(loss.item(), image.size(0))
+            top1_meter.update(top1.item(), image.size(0))
+            top5_meter.update(top5.item(), image.size(0))
             if batch_idx % args.log_interval == 0 or batch_idx == total_iters - 1:
                 _logger.info(
                     f'\tEval-{epoch}: [{batch_idx}/{total_iters}], '
-                    f'Loss: {loss:.4f}, Acc: {acc:.2f}'
+                    f'Loss: {loss_meter.avg:.4f}, Acc@1: {top1_meter.avg:.2f} Acc@5: {top5_meter.avg:.2f}'
                 )
-        best_metric, best_epoch = saver.save_checkpoint(epoch, metric=acc)
+        best_metric, best_epoch = saver.save_checkpoint(epoch, metric=top1_meter.avg)
     return best_metric, best_epoch
 
 
