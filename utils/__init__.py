@@ -1,1 +1,1 @@
-from .validate import validate
+from .time_predictor import TimePredictor
