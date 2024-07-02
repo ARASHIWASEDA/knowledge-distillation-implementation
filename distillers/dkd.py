@@ -21,7 +21,7 @@ class DKD(BaseDistiller):
 
         loss_gt = self.args.gt_loss_weight * self.criterion(logits_student, label)
         loss_kd = self.args.kd_loss_weight * dkd_loss(logits_student, logits_teacher, label, self.args.dkd_alpha,
-                                                      self.args.dkd_beta, self.kd_temperature)
+                                                      self.args.dkd_beta, self.args.kd_temperature)
         losses_dict = {
             "loss_gt": loss_gt,
             "loss_kd": loss_kd

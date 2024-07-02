@@ -80,6 +80,7 @@ def train(epoch, distiller, loader, optimizer, args, device, total_iters):
             losses_info = []
             for k, v in losses_meter_dict.items():
                 info = f'{k.capitalize()}: {v.avg:.4f}'
+                losses_info.append(info)
             losses_info = '  '.join(losses_info)
             _logger.info(
                 f'Train-{epoch}: [{batch_idx}/{total_iters}], '
