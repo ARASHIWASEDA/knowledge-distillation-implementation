@@ -18,6 +18,8 @@ from timm.utils.checkpoint_saver import CheckpointSaver
 from timm.models import create_model, load_checkpoint
 from distillers import get_distiller
 
+from utils import TimePredictor
+
 # logger setting
 _logger = logging.getLogger("train")
 
@@ -201,6 +203,7 @@ def main():
     with open(os.path.join(output_dir, 'args.yaml'), 'w') as f:
         f.write(args_text)
     try:
+        timer = TimePredictor(args.epochs)
         for epoch in range(1, args.epochs + 1):
             train(epoch=epoch,
                   distiller=distiller,
@@ -218,6 +221,10 @@ def main():
                                            total_iters=total_eval_iters,
                                            loss_func=loss_func,
                                            saver=saver)
+            timer.update()
+            preict_timestamp = timer.get_predict()
+            _logger.info(f'Average running time of lateset {timer.history} {timer.average_duration}, '
+                         f'predicting finish time is {timer.get_predict()}')
 
     except KeyboardInterrupt:
         pass
