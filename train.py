@@ -26,7 +26,8 @@ _logger = logging.getLogger("train")
 # configs setting
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", default="resnet18", type=str, help='model name')
-parser.add_argument("--learning-rate", default=0.01, type=float, help='learning rate')
+parser.add_argument("--lr", default=0.01, type=float, help='learning rate')
+parser.add_argument("--min-lr", default=1e-6, type=float, help='min learning rate')
 parser.add_argument("--epochs", default=3, type=int, help='epochs to train')
 parser.add_argument("--device", default="cuda", type=str, help='training device')
 parser.add_argument("--batch-size", default=32, type=int, help='batch size')
@@ -79,6 +80,8 @@ def train(epoch, distiller, loader, optimizer, args, device, total_iters):
         optimizer.step()
 
         if batch_idx % args.log_interval == 0 or batch_idx == total_iters - 1:
+            lr_list = [param_group['lr'] for param_group in optimizer.param_groups]
+            lr = sum(lr_list) / len(lr_list)
             losses_info = []
             for k, v in losses_meter_dict.items():
                 info = f'{k.capitalize()}: {v.avg:.4f}'
@@ -87,7 +90,8 @@ def train(epoch, distiller, loader, optimizer, args, device, total_iters):
             _logger.info(
                 f'Train-{epoch}: [{batch_idx}/{total_iters}], '
                 f'Loss: {loss_meter.avg:.4f} {losses_info}, '
-                f'Acc@1: {top1_meter.avg:.2f} Acc@5: {top5_meter.avg:.2f}'
+                f'Acc@1: {top1_meter.avg:.2f} Acc@5: {top5_meter.avg:.2f}, '
+                f'LR: {lr:.4f}'
             )
 
 
@@ -112,7 +116,7 @@ def eval(epoch, model, loader, args, device, total_iters, loss_func, saver):
                     f'Loss: {loss_meter.avg:.4f}, Acc@1: {top1_meter.avg:.2f} Acc@5: {top5_meter.avg:.2f}'
                 )
         best_metric, best_epoch = saver.save_checkpoint(epoch, metric=top1_meter.avg)
-    return best_metric, best_epoch
+    return best_metric, best_epoch, top1_meter.avg
 
 
 # main function
@@ -184,7 +188,9 @@ def main():
     Distiller = get_distiller(args.distiller.lower())
     distiller = Distiller(model, teacher, loss_func, args)
     distiller.to(device)
-    optimizer = torch.optim.SGD(distiller.parameters(), lr=args.learning_rate)
+    optimizer = torch.optim.SGD(distiller.parameters(), lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=30,
+                                                           min_lr=args.min_lr)
 
     # Train and validation
     total_train_iters = len(train_loader)
@@ -213,17 +219,17 @@ def main():
                   device=device,
                   total_iters=total_train_iters)
 
-            best_metric, best_epoch = eval(epoch=epoch,
-                                           model=model,
-                                           loader=eval_loader,
-                                           args=args,
-                                           device=device,
-                                           total_iters=total_eval_iters,
-                                           loss_func=loss_func,
-                                           saver=saver)
+            best_metric, best_epoch, top1 = eval(epoch=epoch,
+                                                 model=model,
+                                                 loader=eval_loader,
+                                                 args=args,
+                                                 device=device,
+                                                 total_iters=total_eval_iters,
+                                                 loss_func=loss_func,
+                                                 saver=saver)
+            scheduler.step(top1)
             timer.update()
-            preict_timestamp = timer.get_predict()
-            _logger.info(f'Average running time of lateset {timer.history} {timer.average_duration}, '
+            _logger.info(f'Average running time of lateset {timer.history} epochs is {timer.average_duration:.2f}s, '
                          f'predicting finish time is {timer.get_predict()}')
 
     except KeyboardInterrupt:

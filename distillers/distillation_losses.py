@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 
 
+# kd loss
 def kd_loss(logits_student, logits_teacher, kd_temperature):
     log_pred_student = F.log_softmax(logits_student / kd_temperature, dim=1)
     pred_teacher = F.softmax(logits_teacher / kd_temperature, dim=1)
@@ -10,6 +11,7 @@ def kd_loss(logits_student, logits_teacher, kd_temperature):
     return loss_kd
 
 
+# dkd loss
 def dkd_loss(logits_student, logits_teacher, label, alpha, beta, kd_temperature):
     gt_mask, other_mask = _get_mask(logits_student, label)
     pred_student = F.softmax(logits_student / kd_temperature, dim=1)
@@ -37,3 +39,28 @@ def cat_mask(logits, gt_mask, other_mask):
     other_pred = (logits * other_mask).sum(dim=1, keepdim=True)
     pred = torch.cat([target_pred, other_pred], dim=1)  # (batch_size, 2)
     return pred
+
+
+# dist loss
+def dist_loss(logits_student, logits_teacher, beta=1., gamma=1., kd_temperature=1.):
+    pred_student = F.softmax(logits_student / kd_temperature, dim=1)
+    pred_teacher = F.softmax(logits_teacher / kd_temperature, dim=1)
+    inter_loss = kd_temperature ** 2 * inter_class_relation(pred_student, pred_teacher)
+    intra_loss = kd_temperature ** 2 * intra_class_relation(pred_student, pred_teacher)
+    return beta * inter_loss + gamma * intra_loss
+
+
+def inter_class_relation(pred_student, pred_teacher):
+    return 1 - pearson_correlation(pred_student, pred_teacher).mean()
+
+
+def intra_class_relation(pred_student, pred_teacher):
+    return inter_class_relation(pred_student.transpose(0, 1), pred_teacher.transpose(0, 1))
+
+
+def cosine_similarity(a, b, eps=1e-8):
+    return (a * b).sum(1) / (a.norm(dim=1) * b.norm(dim=1) + eps)
+
+
+def pearson_correlation(a, b, eps=1e-8):
+    return cosine_similarity(a - a.mean(1).unsqueeze(1), b - b.mean(1).unsqueeze(1), eps)
