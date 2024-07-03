@@ -8,6 +8,7 @@ from collections import defaultdict
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.cuda.amp import autocast, GradScaler
 import torchvision.datasets as datasets
 import torchvision.transforms as transform
 
@@ -23,8 +24,9 @@ from utils import TimePredictor
 # logger setting
 _logger = logging.getLogger("train")
 
-# configs setting
+# configs settings
 parser = argparse.ArgumentParser()
+parser.add_argument("--config", default='', type=str, help='path to config file')
 parser.add_argument("--model", default="resnet18", type=str, help='model name')
 parser.add_argument("--lr", default=0.01, type=float, help='learning rate')
 parser.add_argument("--min-lr", default=1e-6, type=float, help='min learning rate')
@@ -39,7 +41,7 @@ parser.add_argument("--pretrained", default=False, action='store_true')
 parser.add_argument("--dataset-download", default=False, action='store_true')
 parser.add_argument("--dataset", default='cifar10', type=str, help='support cifar10 or cifar100 now')
 
-# distillation setting
+# distillation settings
 parser.add_argument("--distiller", default='vanilla', type=str)
 parser.add_argument("--teacher", default=None, type=str, help='name of teacher model')
 parser.add_argument("--teacher-pretrained", default=False, action='store_true')
@@ -53,8 +55,25 @@ parser.add_argument("--gt-loss-weight", default=1., type=float)
 parser.add_argument("--dkd-alpha", default=1., type=float)
 parser.add_argument("--dkd-beta", default=1., type=float)
 
+# DIST settings
+parser.add_argument("--dist-beta", default=1., type=float)
+parser.add_argument("--dist-gamma", default=1., type=float)
 
-def train(epoch, distiller, loader, optimizer, args, device, total_iters):
+
+def _load_config():
+    config_parser = parser
+    args_known, parser_unknown = parser.parse_known_args()  # args_config are args specified in terminal
+    if args_known.config:
+        with open(args_known.config, 'r') as f:
+            cfg = yaml.safe_load(f)
+            config_parser.set_defaults(**cfg)
+
+    args = config_parser.parse_args(parser_unknown)
+    args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
+    return args, args_text
+
+
+def train(epoch, distiller, loader, optimizer, scaler, args, device, total_iters):
     loss_meter = AverageMeter()
     top1_meter = AverageMeter()
     top5_meter = AverageMeter()
@@ -65,8 +84,9 @@ def train(epoch, distiller, loader, optimizer, args, device, total_iters):
     for batch_idx, (images, labels) in enumerate(loader):
         image = images.to(device)
         labels = labels.to(device)
-        logits_student, losses_dict = distiller(image, labels)
-        loss = sum(losses_dict.values())
+        with autocast():
+            logits_student, losses_dict = distiller(image, labels)
+            loss = sum(losses_dict.values())
         top1, top5 = accuracy(logits_student.detach(), labels, topk=(1, 5))
         top1_meter.update(top1.item(), image.size(0))
         top5_meter.update(top5.item(), image.size(0))
@@ -76,8 +96,9 @@ def train(epoch, distiller, loader, optimizer, args, device, total_iters):
             losses_meter_dict[k].update(losses_dict[k].item(), image.size(0))
 
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         if batch_idx % args.log_interval == 0 or batch_idx == total_iters - 1:
             lr_list = [param_group['lr'] for param_group in optimizer.param_groups]
@@ -122,8 +143,7 @@ def eval(epoch, model, loader, args, device, total_iters, loss_func, saver):
 # main function
 def main():
     # process args and some paths
-    args = parser.parse_args()
-    args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
+    args, args_text = _load_config()
     output_path = args.output if args.output is not None else './output/train'
     if args.experiment:
         exp_name = args.experiment
@@ -191,6 +211,7 @@ def main():
     optimizer = torch.optim.SGD(distiller.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=30,
                                                            min_lr=args.min_lr)
+    scaler = GradScaler()
 
     # Train and validation
     total_train_iters = len(train_loader)
@@ -215,6 +236,7 @@ def main():
                   distiller=distiller,
                   loader=train_loader,
                   optimizer=optimizer,
+                  scaler=scaler,
                   args=args,
                   device=device,
                   total_iters=total_train_iters)
