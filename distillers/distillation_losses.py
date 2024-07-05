@@ -64,3 +64,28 @@ def cosine_similarity(a, b, eps=1e-8):
 
 def pearson_correlation(a, b, eps=1e-8):
     return cosine_similarity(a - a.mean(1).unsqueeze(1), b - b.mean(1).unsqueeze(1), eps)
+
+
+# nkd loss
+def nkd_loss(logits_student, logits_teacher, label, alpha, beta, temperature=1.):
+    # todo：nkd和dkd有什么区别
+    target = label.reshape(-1)
+    target = target.unsqueeze(1)
+
+    N, c = logits_student.shape
+    log_pred_student = F.log_softmax(logits_student, dim=1)
+    pred_teacher = F.softmax(logits_teacher, dim=1)  # todo：这里为什么要先计算softmax，如果直接计算target看看效果
+
+    target_student = torch.gather(log_pred_student, 1, label)  # get the score of target class
+    target_teacher = torch.gather(pred_teacher, 1, label)  # shape: (batch_size,1)
+    tckd_loss = -(target_teacher * target_teacher).mean()
+
+    mask = torch.ones_like(logits_student).scatter_(1, label, 0).bool()
+    logits_student = logits_student[mask].reshape(N, -1)
+    logits_teacher = logits_teacher[mask].reshape(N, -1)
+
+    non_target_student = F.log_softmax(logits_student / temperature, dim=1)  # todo:这里的损失函数改成ranking
+    non_target_teacher = F.softmax(logits_teacher / temperature, dim=1)
+
+    nckd_loss = -(non_target_student, non_target_teacher).sum(dim=1).mean()
+    return alpha * tckd_loss + beta * (temperature ** 2) * nckd_loss
