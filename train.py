@@ -1,5 +1,3 @@
-import argparse
-import yaml
 import os
 import logging
 from datetime import datetime
@@ -7,10 +5,7 @@ from collections import defaultdict
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
-import torchvision.datasets as datasets
-import torchvision.transforms as transform
 
 from timm.utils.log import setup_default_logging
 from timm.utils.metrics import AverageMeter, accuracy
@@ -19,69 +14,36 @@ from timm.utils.checkpoint_saver import CheckpointSaver
 from timm.models import create_model, load_checkpoint
 from distillers import get_distiller
 
-from utils import TimePredictor
+from utils import TimePredictor, _load_config, get_dataset, get_optimizer
 
 # logger setting
 _logger = logging.getLogger("train")
 
-# configs settings
-parser = argparse.ArgumentParser()
-parser.add_argument("--config", default='', type=str, help='path to config file')
-parser.add_argument("--model", default="resnet18", type=str, help='model name')
-parser.add_argument("--lr", default=0.01, type=float, help='learning rate')
-parser.add_argument("--min-lr", default=1e-6, type=float, help='min learning rate')
-parser.add_argument("--epochs", default=3, type=int, help='epochs to train')
-parser.add_argument("--device", default="cuda", type=str, help='training device')
-parser.add_argument("--batch-size", default=32, type=int, help='batch size')
-parser.add_argument("--log-interval", default=500, type=int, help='to print log info every designated iters')
-parser.add_argument("--output", default=None, type=str, help='output path to save results')
-parser.add_argument("--experiment", default=None, type=str, help='name of subfolder of outpur dir')
-parser.add_argument("--num-classes", default=10, type=int, help='number of classes of the dataset')
-parser.add_argument("--pretrained", default=False, action='store_true')
-parser.add_argument("--dataset-download", default=False, action='store_true')
-parser.add_argument("--dataset", default='cifar10', type=str, help='support cifar10 or cifar100 now')
 
-# distillation settings
-parser.add_argument("--distiller", default='vanilla', type=str)
-parser.add_argument("--teacher", default=None, type=str, help='name of teacher model')
-parser.add_argument("--teacher-pretrained", default=False, action='store_true')
-parser.add_argument("--teacher-weight", default='./weights/resnet/resnet50_cifar10.pth.tar', type=str,
-                    help='path of pre-trained teacher weight')
-parser.add_argument("--kd-temperature", default=4., type=float, help='distillation temperature')
-parser.add_argument("--kd-loss-weight", default=1., type=float)
-parser.add_argument("--gt-loss-weight", default=1., type=float)
-
-# DKD settings
-parser.add_argument("--dkd-alpha", default=1., type=float)
-parser.add_argument("--dkd-beta", default=1., type=float)
-
-# DIST settings
-parser.add_argument("--dist-beta", default=1., type=float)
-parser.add_argument("--dist-gamma", default=1., type=float)
-
-
-def _load_config():
-    config_parser = parser
-    args_known, parser_unknown = parser.parse_known_args()  # args_config are args specified in terminal
-    if args_known.config:
-        with open(args_known.config, 'r') as f:
-            cfg = yaml.safe_load(f)
-            config_parser.set_defaults(**cfg)
-
-    args = config_parser.parse_args(parser_unknown)
-    args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
-    return args, args_text
-
-
-def train(epoch, distiller, loader, optimizer, scaler, args, device, total_iters):
+# train and evaluation loop
+def train_and_eval(epoch,
+                   distiller,
+                   train_loader,
+                   eval_loader,
+                   optimizer,
+                   scheduler,
+                   scaler,
+                   device,
+                   loss_func,
+                   saver,
+                   args):
     loss_meter = AverageMeter()
     top1_meter = AverageMeter()
     top5_meter = AverageMeter()
-    loss_gt_meter = AverageMeter()
-    loss_kd_meter = AverageMeter()
     losses_meter_dict = defaultdict(AverageMeter)
+    eval_loss_meter = AverageMeter()
+    eval_top1_meter = AverageMeter()
+    eval_top5_meter = AverageMeter()
+
+    train_iters = len(train_loader)
+    eval_iters = len(eval_loader)
     distiller.train()
-    for batch_idx, (images, labels) in enumerate(loader):
+    for batch_idx, (images, labels) in enumerate(train_loader):
         image = images.to(device)
         labels = labels.to(device)
         with autocast():
@@ -100,7 +62,7 @@ def train(epoch, distiller, loader, optimizer, scaler, args, device, total_iters
         scaler.step(optimizer)
         scaler.update()
 
-        if batch_idx % args.log_interval == 0 or batch_idx == total_iters - 1:
+        if batch_idx % args.log_interval == 0 or batch_idx == train_iters - 1:
             lr_list = [param_group['lr'] for param_group in optimizer.param_groups]
             lr = sum(lr_list) / len(lr_list)
             losses_info = []
@@ -109,35 +71,31 @@ def train(epoch, distiller, loader, optimizer, scaler, args, device, total_iters
                 losses_info.append(info)
             losses_info = '  '.join(losses_info)
             _logger.info(
-                f'Train-{epoch}: [{batch_idx}/{total_iters}], '
+                f'Train-{epoch}: [{batch_idx}/{train_iters}], '
                 f'Loss: {loss_meter.avg:.4f} {losses_info}, '
                 f'Acc@1: {top1_meter.avg:.2f} Acc@5: {top5_meter.avg:.2f}, '
                 f'LR: {lr:.4f}'
             )
 
-
-def eval(epoch, model, loader, args, device, total_iters, loss_func, saver):
-    loss_meter = AverageMeter()
-    top1_meter = AverageMeter()
-    top5_meter = AverageMeter()
     with torch.no_grad():
-        model.eval()
-        for batch_idx, (image, labels) in enumerate(loader):
+        distiller.student.eval()
+        for batch_idx, (image, labels) in enumerate(eval_loader):
             image = image.to(device)
             labels = labels.to(device)
-            preds = model(image)
+            preds = distiller.student(image)
             loss = loss_func(preds, labels)
             top1, top5 = accuracy(preds, labels, topk=(1, 5))
-            loss_meter.update(loss.item(), image.size(0))
-            top1_meter.update(top1.item(), image.size(0))
-            top5_meter.update(top5.item(), image.size(0))
-            if batch_idx % args.log_interval == 0 or batch_idx == total_iters - 1:
+            eval_loss_meter.update(loss.item(), image.size(0))
+            eval_top1_meter.update(top1.item(), image.size(0))
+            eval_top5_meter.update(top5.item(), image.size(0))
+            if batch_idx % args.log_interval == 0 or batch_idx == eval_iters - 1:
                 _logger.info(
-                    f'\tEval-{epoch}: [{batch_idx}/{total_iters}], '
-                    f'Loss: {loss_meter.avg:.4f}, Acc@1: {top1_meter.avg:.2f} Acc@5: {top5_meter.avg:.2f}'
+                    f'\tEval-{epoch}: [{batch_idx}/{eval_iters}], '
+                    f'Loss: {eval_loss_meter.avg:.4f}, Acc@1: {eval_top1_meter.avg:.2f} Acc@5: {eval_top5_meter.avg:.2f}'
                 )
-        best_metric, best_epoch = saver.save_checkpoint(epoch, metric=top1_meter.avg)
-    return best_metric, best_epoch, top1_meter.avg
+        best_metric, best_epoch = saver.save_checkpoint(epoch, metric=eval_top1_meter.avg)
+    scheduler.step(eval_top1_meter.avg)
+    return best_metric, best_epoch
 
 
 # main function
@@ -163,34 +121,14 @@ def main():
     # choose device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # create dataset
-    if args.dataset == 'cifar10':
-        transforms = transform.Compose([
-            transform.Resize(224),
-            transform.ToTensor(),
-            transform.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010))
-        ])
-        train_dataset = datasets.CIFAR10(root="datasets", train=True, transform=transforms,
-                                         download=args.dataset_download)
-        eval_dataset = datasets.CIFAR10(root="datasets", train=False, transform=transforms,
-                                        download=args.dataset_download)
-    else:
-        transforms = transform.Compose([
-            transform.Resize(224),
-            transform.ToTensor(),
-            transform.Normalize(mean=((0.5071, 0.4867, 0.4408)), std=(0.2675, 0.2565, 0.2761))
-        ])
-        train_dataset = datasets.CIFAR100(root="datasets", train=True, transform=transforms,
-                                          download=args.dataset_download)
-        eval_dataset = datasets.CIFAR100(root="datasets", train=False, transform=transforms,
-                                         download=args.dataset_download)
-
-    # create dataloader
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    eval_loader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False)
-
+    # get dataset
+    train_loader, eval_loader = get_dataset(args.dataset, args.dataset_download, args.batch_size)
     # create model
-    model = create_model(args.model, pretrained=args.pretrained, num_classes=args.num_classes)
+    if args.weight is not None:
+        model = create_model(args.model, pretrained=args.pretrained, num_classes=args.num_classes,
+                             pretrained_cfg_overlay=dict(file=args.weight))
+    else:
+        model = create_model(args.model, pretrained=args.pretrained, num_classes=args.num_classes)
 
     # create teacher model
     teacher = None
@@ -207,17 +145,22 @@ def main():
     # create distiller
     Distiller = get_distiller(args.distiller.lower())
     distiller = Distiller(model, teacher, loss_func, args)
+
+    # print parameter amounts
+    student_params, teacher_params, extra_params = distiller.compute_parameters()
+    _logger.info(f'======================================================================\n'
+                 f'Student params: {student_params / 1e6:.2f}M\n'
+                 f'Teacher params: {teacher_params / 1e6:.2f}M\n'
+                 f'Extra params: {extra_params / 1e6:.2f}M\n'
+                 f'======================================================================\n')
     distiller.to(device)
-    optimizer = torch.optim.SGD(distiller.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=30,
-                                                           min_lr=args.min_lr)
+    optimizer, scheduler = get_optimizer(distiller, args)
+    # amp setting
     scaler = GradScaler()
 
     # Train and validation
-    total_train_iters = len(train_loader)
-    total_eval_iters = len(eval_loader)
     best_metric = None
-
+    best_epoch = None
     saver = CheckpointSaver(
         model=model,
         optimizer=optimizer,
@@ -232,24 +175,18 @@ def main():
     try:
         timer = TimePredictor(args.epochs)
         for epoch in range(1, args.epochs + 1):
-            train(epoch=epoch,
-                  distiller=distiller,
-                  loader=train_loader,
-                  optimizer=optimizer,
-                  scaler=scaler,
-                  args=args,
-                  device=device,
-                  total_iters=total_train_iters)
+            best_metric, best_epoch = train_and_eval(epoch=epoch,
+                                                     distiller=distiller,
+                                                     train_loader=train_loader,
+                                                     eval_loader=eval_loader,
+                                                     optimizer=optimizer,
+                                                     scheduler=scheduler,
+                                                     scaler=scaler,
+                                                     device=device,
+                                                     loss_func=loss_func,
+                                                     saver=saver,
+                                                     args=args)
 
-            best_metric, best_epoch, top1 = eval(epoch=epoch,
-                                                 model=model,
-                                                 loader=eval_loader,
-                                                 args=args,
-                                                 device=device,
-                                                 total_iters=total_eval_iters,
-                                                 loss_func=loss_func,
-                                                 saver=saver)
-            scheduler.step(top1)
             timer.update()
             _logger.info(f'Average running time of lateset {timer.history} epochs is {timer.average_duration:.2f}s, '
                          f'predicting finish time is {timer.get_predict()}')
@@ -257,7 +194,7 @@ def main():
     except KeyboardInterrupt:
         pass
     if best_metric is not None:
-        _logger.info(f'***** Best metric is {best_metric:.2f}({best_epoch}) *****.')
+        _logger.info(f'***** Best metric is {best_metric:.2f} at epoch {best_epoch}. *****.')
 
 
 if __name__ == "__main__":
