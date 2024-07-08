@@ -11,6 +11,7 @@ from timm.utils.log import setup_default_logging
 from timm.utils.metrics import AverageMeter, accuracy
 from timm.utils.summary import get_outdir
 from timm.utils.checkpoint_saver import CheckpointSaver
+from timm.utils.random import random_seed
 from timm.models import create_model, load_checkpoint
 from distillers import get_distiller
 
@@ -74,9 +75,11 @@ def train_and_eval(epoch,
                 f'Train-{epoch}: [{batch_idx}/{train_iters}], '
                 f'Loss: {loss_meter.avg:.4f} {losses_info}, '
                 f'Acc@1: {top1_meter.avg:.2f} Acc@5: {top5_meter.avg:.2f}, '
-                f'LR: {lr:.4f}'
+                f'LR: {lr:.2e}'
             )
 
+    best_metric = None
+    best_epoch = None
     with torch.no_grad():
         distiller.student.eval()
         for batch_idx, (image, labels) in enumerate(eval_loader):
@@ -117,12 +120,14 @@ def main():
 
     # setup logging
     setup_default_logging(log_path=log_path)
+    random_seed(args.seed)
 
     # choose device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    assert torch.cuda.is_available(), 'This code only support cuda because the usage of amp.'
+    device = torch.device("cuda")
 
     # get dataset
-    train_loader, eval_loader = get_dataset(args.dataset, args.dataset_download, args.batch_size)
+    train_loader, eval_loader = get_dataset(args.dataset, args.dataset_download, args.batch_size, args.workers)
     # create model
     if args.weight is not None:
         model = create_model(args.model, pretrained=args.pretrained, num_classes=args.num_classes,

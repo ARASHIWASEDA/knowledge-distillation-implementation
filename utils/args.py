@@ -17,6 +17,8 @@ parser.add_argument("--pretrained", default=False, action='store_true')
 parser.add_argument("--weight", default=None, type=str)
 parser.add_argument("--dataset-download", default=False, action='store_true')
 parser.add_argument("--dataset", default='cifar10', type=str, help='support cifar10 or cifar100 now')
+parser.add_argument("--workers", default=8, type=int)
+parser.add_argument("--seed", default=42, type=int)
 
 # optimizer settings
 parser.add_argument("--opt", type=str, default='sgd')
@@ -52,6 +54,12 @@ parser.add_argument("--rkd-squared", action='store_true', default=False)
 parser.add_argument("--rkd-eps", default=1e-12, type=float)
 parser.add_argument("--rkd-distance-weight", default=25, type=int)
 parser.add_argument("--rkd-angle-weight", default=50, type=int)
+
+# OFAKD settings
+parser.add_argument("--ofa-stage", default=[1, 2, 3, 4], nargs='+', type=int)
+parser.add_argument("--ofa-loss-weight", default=1.0, type=float)
+parser.add_argument("--ofa-temperature", default=1.0, type=float)
+parser.add_argument("--ofa-eps", default=1.0, type=float)
 
 
 def _load_config():

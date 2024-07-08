@@ -89,3 +89,12 @@ def nkd_loss(logits_student, logits_teacher, label, alpha, beta, temperature=1.)
 
     nckd_loss = -(non_target_student, non_target_teacher).sum(dim=1).mean()
     return alpha * tckd_loss + beta * (temperature ** 2) * nckd_loss
+
+
+# ofa loss
+def ofa_loss(logits_student, logits_teacher, target_mask, eps, temperature=1.):
+    pred_student = F.softmax(logits_student / temperature, dim=1)
+    pred_teacher = F.softmax(logits_teacher / temperature, dim=1)
+    prod = (pred_teacher + target_mask) ** eps
+    loss = torch.sum(-(prod - target_mask) * torch.log(pred_student), dim=-1)
+    return loss.mean()
