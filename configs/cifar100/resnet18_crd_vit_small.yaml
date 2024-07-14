@@ -1,0 +1,20 @@
+model: resnet18
+lr: 5e-2
+min_lr: 1e-4
+epochs: 150
+device: cuda
+batch_size: 128
+log_interval: 100
+output: output/cifar100/resnet18_crd_vit_small
+num_classes: 100
+pretrained: false
+dataset: cifar100
+dataset_download: false
+
+distiller: crd
+teacher: vit_small_patch16_224
+teacher_weight: weights/vit_small/cifar100_vit_small_91.40.pth.tar
+opt: sgd
+weight_decay: 2e-3
+sched: cosine
+cosine_tmax: 150

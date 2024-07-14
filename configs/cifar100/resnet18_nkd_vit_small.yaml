@@ -1,0 +1,20 @@
+model: resnet18
+lr: 5e-2
+epochs: 240
+device: cuda
+batch_size: 64
+log_interval: 200
+output: output/cifar100/resnet18_nkd_vit_small
+num_classes: 100
+pretrained: false
+dataset: cifar100
+dataset_download: false
+
+distiller: nkd
+teacher: vit_small_patch16_224
+teacher_weight: weights/vit_small/cifar100_vit_small_91.40.pth.tar
+opt: sgd
+weight_decay: 5e-4
+sched: multistep
+nkd_gamma: 1.5
+nkd_temperature: 1.0

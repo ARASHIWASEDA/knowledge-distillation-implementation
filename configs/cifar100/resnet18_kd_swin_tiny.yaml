@@ -1,0 +1,21 @@
+model: resnet18
+lr: 5e-2
+min_lr: 1e-4
+epochs: 150
+device: cuda
+batch_size: 128
+log_interval: 100
+output: output/cifar100/resnet18_kd_swin_tiny
+num_classes: 100
+pretrained: false
+dataset: cifar100
+dataset_download: false
+
+distiller: kd
+teacher: swin_tiny_patch4_window7_224
+teacher_weight: weights/swin_tiny/cifar100_swin_tiny_88.49.pth.tar
+opt: sgd
+weight_decay: 2e-3
+sched: cosine
+cosine_tmax: 150
+kd_temperature: 4.0
