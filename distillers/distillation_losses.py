@@ -3,7 +3,7 @@ import torch.nn.functional as F
 
 
 # kd loss
-def kd_loss(logits_student, logits_teacher, kd_temperature):
+def kd_loss(logits_student, logits_teacher, kd_temperature=1.):
     log_pred_student = F.log_softmax(logits_student / kd_temperature, dim=1)
     pred_teacher = F.softmax(logits_teacher / kd_temperature, dim=1)
     loss_kd = F.kl_div(log_pred_student, pred_teacher, reduction='batchmean')
@@ -67,28 +67,27 @@ def pearson_correlation(a, b, eps=1e-8):
 
 
 # nkd loss
-def nkd_loss(logits_student, logits_teacher, label, alpha, beta, temperature=1.):
+def nkd_loss(logits_student, logits_teacher, label, gamma, temperature=1.):
     # todo：nkd和dkd有什么区别
-    target = label.reshape(-1)
-    target = target.unsqueeze(1)
+    target = label.reshape(len(label), -1)
 
     N, c = logits_student.shape
     log_pred_student = F.log_softmax(logits_student, dim=1)
     pred_teacher = F.softmax(logits_teacher, dim=1)  # todo：这里为什么要先计算softmax，如果直接计算target看看效果
 
-    target_student = torch.gather(log_pred_student, 1, label)  # get the score of target class
-    target_teacher = torch.gather(pred_teacher, 1, label)  # shape: (batch_size,1)
-    tckd_loss = -(target_teacher * target_teacher).mean()
+    target_student = torch.gather(log_pred_student, 1, target)  # get the score of target class
+    target_teacher = torch.gather(pred_teacher, 1, target)  # shape: (batch_size,1)
+    tckd_loss = -(target_student * target_teacher).mean()
 
-    mask = torch.ones_like(logits_student).scatter_(1, label, 0).bool()
+    mask = torch.ones_like(logits_student).scatter_(1, target, 0).bool()
     logits_student = logits_student[mask].reshape(N, -1)
     logits_teacher = logits_teacher[mask].reshape(N, -1)
 
-    non_target_student = F.log_softmax(logits_student / temperature, dim=1)  # todo:这里的损失函数改成ranking
+    non_target_student = F.log_softmax(logits_student / temperature, dim=1)
     non_target_teacher = F.softmax(logits_teacher / temperature, dim=1)
 
-    nckd_loss = -(non_target_student, non_target_teacher).sum(dim=1).mean()
-    return alpha * tckd_loss + beta * (temperature ** 2) * nckd_loss
+    nckd_loss = -(non_target_student * non_target_teacher).sum(dim=1).mean()
+    return tckd_loss + gamma * (temperature ** 2) * nckd_loss
 
 
 # ofa loss
@@ -98,3 +97,26 @@ def ofa_loss(logits_student, logits_teacher, target_mask, eps, temperature=1.):
     prod = (pred_teacher + target_mask) ** eps
     loss = torch.sum(-(prod - target_mask) * torch.log(pred_student), dim=-1)
     return loss.mean()
+
+
+# thkd loss
+def thkd_loss(logits_student, logits_teacher, label, gamma, temperature=1.):
+    target = label.reshape(len(label), -1)
+
+    N, c = logits_student.shape
+    log_pred_student = F.log_softmax(logits_student, dim=1)
+    pred_teacher = F.softmax(logits_teacher, dim=1)
+
+    target_student = torch.gather(log_pred_student, 1, target)  # get the score of target class
+    target_teacher = torch.gather(pred_teacher, 1, target)  # shape: (batch_size,1)
+    tckd_loss = F.kl_div(target_student, target_teacher, reduction='batchmean')
+
+    mask = torch.ones_like(logits_student).scatter_(1, target, 0).bool()
+    logits_student = logits_student[mask].reshape(N, -1)
+    logits_teacher = logits_teacher[mask].reshape(N, -1)
+
+    non_target_student = F.log_softmax(logits_student / temperature, dim=1)
+    non_target_teacher = F.softmax(logits_teacher / temperature, dim=1)
+
+    nckd_loss = F.kl_div(non_target_student, non_target_teacher, reduction='batchmean')
+    return tckd_loss + gamma * (temperature ** 2) * nckd_loss

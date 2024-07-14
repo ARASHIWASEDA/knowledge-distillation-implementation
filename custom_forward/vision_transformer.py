@@ -40,7 +40,7 @@ def forward_features(self, x, requires_feature):
             feat.append(x)
     else:
         x = self.blocks(x)
-    x = self.norm()
+    x = self.norm(x)
     return (x, feat) if requires_feature else x
 
 
@@ -53,5 +53,5 @@ def stage_info(self, stage):
 
 
 @register_method
-def is_cnn_model():
+def is_cnn_model(self):
     return False

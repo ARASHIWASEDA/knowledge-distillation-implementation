@@ -17,7 +17,7 @@ class DIST(BaseDistiller):
             logits_teacher = self.teacher(image)
         logits_student = self.student(image)
         loss_kd = self.args.kd_loss_weight * dist_loss(logits_student, logits_teacher, self.args.dist_beta,
-                                                       self.args.dist_gamma, self.args.kd_temperature)
+                                                       self.args.dist_gamma, self.args.dist_temperature)
         loss_gt = self.args.gt_loss_weight * self.criterion(logits_student, label)
         losses_dict = {
             'loss_kd': loss_kd,

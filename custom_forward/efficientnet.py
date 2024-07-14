@@ -51,5 +51,5 @@ def stage_info(self, stage):
 
 
 @register_method
-def is_cnn_model():
+def is_cnn_model(self):
     return True

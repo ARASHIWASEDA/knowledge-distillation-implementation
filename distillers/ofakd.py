@@ -23,7 +23,7 @@ class OFAKD(BaseDistiller):
         _, feature_dim_t = self.teacher.stage_info(-1)
         _, feature_dim_s = self.student.stage_info(-1)
 
-        for stage in self.student.ofa_stage:
+        for stage in self.args.ofa_stages:
             _, size_s = self.student.stage_info(stage)
             if is_cnn_student:
                 in_chans, _, _ = size_s
@@ -83,7 +83,7 @@ class OFAKD(BaseDistiller):
                     get_feature,
                     nn.Linear(feature_dim_s, self.args.num_classes)
                 )
-            self.projector[stage] = projector
+            self.projector[str(stage)] = projector
             self.projector.apply(init_weights)
 
     def forward(self, image, label):
@@ -97,10 +97,10 @@ class OFAKD(BaseDistiller):
         target_mask = F.one_hot(label, num_classes)
 
         ofa_losses = []
-        for stage in self.args.ofa_stage:
+        for stage in self.args.ofa_stages:
             idx_s, _ = self.student.stage_info(stage)
             feat_s = features_student[idx_s]
-            logits_student_head = self.projector[stage](feat_s)
+            logits_student_head = self.projector[str(stage)](feat_s)
 
             ofa_losses.append(
                 ofa_loss(logits_student_head, logits_teacher, target_mask, self.args.ofa_eps,

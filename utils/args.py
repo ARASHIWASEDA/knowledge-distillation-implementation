@@ -30,6 +30,9 @@ parser.add_argument("--sched-gamma", type=float, default=0.1)
 parser.add_argument("--sched-mode", type=str, default="max")
 parser.add_argument("--sched-patience", type=int, default=30)
 parser.add_argument("--cosine-tmax", type=int, default=100)
+parser.add_argument("--clip-grad", type=float, default=None)
+parser.add_argument("--clip-type", type=int, default=2)
+parser.add_argument("--multistep-milestones", nargs='+', type=int, default=[150, 180, 210])
 
 # distillation settings
 parser.add_argument("--distiller", default='vanilla', type=str)
@@ -37,17 +40,25 @@ parser.add_argument("--teacher", default=None, type=str, help='name of teacher m
 parser.add_argument("--teacher-pretrained", default=False, action='store_true')
 parser.add_argument("--teacher-weight", default='./weights/resnet/resnet50_cifar10.pth.tar', type=str,
                     help='path of pre-trained teacher weight')
-parser.add_argument("--kd-temperature", default=4., type=float, help='distillation temperature')
 parser.add_argument("--kd-loss-weight", default=1., type=float)
 parser.add_argument("--gt-loss-weight", default=1., type=float)
+
+# KD settings
+parser.add_argument("--kd-temperature", default=4., type=float, help='distillation temperature')
+
+# NKD settings
+parser.add_argument("--nkd-gamma", default=1., type=float)
+parser.add_argument("--nkd-temperature", default=1., type=float)
 
 # DKD settings
 parser.add_argument("--dkd-alpha", default=1., type=float)
 parser.add_argument("--dkd-beta", default=1., type=float)
+parser.add_argument("--dkd-temperature", default=1., type=float)
 
 # DIST settings
 parser.add_argument("--dist-beta", default=1., type=float)
 parser.add_argument("--dist-gamma", default=1., type=float)
+parser.add_argument("--dist-temperature", default=1., type=float)
 
 # RKD settings
 parser.add_argument("--rkd-squared", action='store_true', default=False)
@@ -56,10 +67,27 @@ parser.add_argument("--rkd-distance-weight", default=25, type=int)
 parser.add_argument("--rkd-angle-weight", default=50, type=int)
 
 # OFAKD settings
-parser.add_argument("--ofa-stage", default=[1, 2, 3, 4], nargs='+', type=int)
+parser.add_argument("--ofa-stages", default=[1, 2, 3, 4], nargs='+', type=int)
 parser.add_argument("--ofa-loss-weight", default=1.0, type=float)
 parser.add_argument("--ofa-temperature", default=1.0, type=float)
 parser.add_argument("--ofa-eps", default=1.0, type=float)
+
+# CRD settings
+parser.add_argument('--crd-feature-dim', default=128, type=int)
+parser.add_argument('--crd-k', default=16384, type=int)
+parser.add_argument('--crd-momentum', default=0.5, type=float)
+parser.add_argument('--crd-temperature', default=0.07, type=float)
+
+# FITNET settings
+parser.add_argument("--fitnet-stages", nargs='+', default=[1, 2, 3, 4], type=int)
+
+# THKD settings
+parser.add_argument("--thkd-stages", nargs='+', default=[1, 2, 3], type=int)
+parser.add_argument("--thkd-shallow-stages", nargs='+', default=[1], type=int)
+parser.add_argument("--thkd-temperature", default=4.0, type=float)
+parser.add_argument("--thkd-blk-num", default=1, type=int)
+parser.add_argument("--thkd-gamma", default=1.5, type=float)
+parser.add_argument("--thkd-loss-weight", default=1., type=float)
 
 
 def _load_config():

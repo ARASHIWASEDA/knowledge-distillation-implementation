@@ -17,9 +17,9 @@ _configs = {
 @register_method
 def forward_features(self, x, requires_feature):
     feat = []
-    x = self.conv1
-    x = self.bn1
-    x = self.act1
+    x = self.conv1(x)
+    x = self.bn1(x)
+    x = self.act1(x)
     x = self.maxpool(x)
 
     x = self.layer1(x)
@@ -57,5 +57,5 @@ def stage_info(self, stage):
 
 
 @register_method
-def is_cnn_model():
+def is_cnn_model(self):
     return True

@@ -16,6 +16,7 @@ from timm.models import create_model, load_checkpoint
 from distillers import get_distiller
 
 from utils import TimePredictor, _load_config, get_dataset, get_optimizer
+from custom_forward import apply_new_method
 
 # logger setting
 _logger = logging.getLogger("train")
@@ -44,11 +45,15 @@ def train_and_eval(epoch,
     train_iters = len(train_loader)
     eval_iters = len(eval_loader)
     distiller.train()
-    for batch_idx, (images, labels) in enumerate(train_loader):
+    for batch_idx, (images, labels, *additional_input) in enumerate(train_loader):
         image = images.to(device)
         labels = labels.to(device)
+        additional_input = [i.to(device) for i in additional_input]
         with autocast():
-            logits_student, losses_dict = distiller(image, labels)
+            if args.distiller == 'crd':
+                logits_student, losses_dict = distiller(image, labels, *additional_input)
+            else:
+                logits_student, losses_dict = distiller(image, labels)
             loss = sum(losses_dict.values())
         top1, top5 = accuracy(logits_student.detach(), labels, topk=(1, 5))
         top1_meter.update(top1.item(), image.size(0))
@@ -60,6 +65,8 @@ def train_and_eval(epoch,
 
         optimizer.zero_grad()
         scaler.scale(loss).backward()
+        if args.clip_grad:
+            nn.utils.clip_grad_norm_(distiller.parameters(), max_norm=args.clip_grad, norm_type=args.clip_type)
         scaler.step(optimizer)
         scaler.update()
 
@@ -97,7 +104,10 @@ def train_and_eval(epoch,
                     f'Loss: {eval_loss_meter.avg:.4f}, Acc@1: {eval_top1_meter.avg:.2f} Acc@5: {eval_top5_meter.avg:.2f}'
                 )
         best_metric, best_epoch = saver.save_checkpoint(epoch, metric=eval_top1_meter.avg)
-    scheduler.step(eval_top1_meter.avg)
+    if args.sched == 'plateau':
+        scheduler.step(eval_top1_meter.avg)
+    else:
+        scheduler.step()
     return best_metric, best_epoch
 
 
@@ -127,13 +137,16 @@ def main():
     device = torch.device("cuda")
 
     # get dataset
-    train_loader, eval_loader = get_dataset(args.dataset, args.dataset_download, args.batch_size, args.workers)
+    train_dataset, eval_dataset, train_loader, eval_loader = get_dataset(args)
     # create model
+    Distiller = get_distiller(args.distiller.lower())
     if args.weight is not None:
         model = create_model(args.model, pretrained=args.pretrained, num_classes=args.num_classes,
                              pretrained_cfg_overlay=dict(file=args.weight))
     else:
         model = create_model(args.model, pretrained=args.pretrained, num_classes=args.num_classes)
+    if Distiller.requires_feature:
+        apply_new_method(model)
 
     # create teacher model
     teacher = None
@@ -141,6 +154,8 @@ def main():
         teacher = create_model(args.teacher, pretrained=args.teacher_pretrained, num_classes=args.num_classes)
         if args.teacher_weight:
             load_checkpoint(teacher, args.teacher_weight)
+        if Distiller.requires_feature:
+            apply_new_method(teacher)
         teacher.requires_grad_(False)
         teacher.eval()
 
@@ -148,8 +163,10 @@ def main():
     loss_func = nn.CrossEntropyLoss()
 
     # create distiller
-    Distiller = get_distiller(args.distiller.lower())
-    distiller = Distiller(model, teacher, loss_func, args)
+    if args.distiller == 'crd':
+        distiller = Distiller(model, teacher, loss_func, args, num_data=len(train_dataset))
+    else:
+        distiller = Distiller(model, teacher, loss_func, args)
 
     # print parameter amounts
     student_params, teacher_params, extra_params = distiller.compute_parameters()

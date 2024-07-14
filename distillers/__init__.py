@@ -3,3 +3,9 @@ from .kd import KD
 from .vanilla import Vanilla
 from .dkd import DKD
 from .dist import DIST
+from .nkd import NKD
+from .crd import CRD
+from .fitnet import FITNET
+from .ofakd import OFAKD
+from .rkd import RKD
+from .thkd import THKD

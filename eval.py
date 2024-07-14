@@ -29,7 +29,7 @@ parser.add_argument("--log-interval", default=100, type=int, help='to print log 
 parser.add_argument("--weight", default=None, type=str)
 parser.add_argument("--dataset-download", default=False, action='store_true')
 parser.add_argument("--dataset", default='cifar100', type=str, help='support cifar10 or cifar100 now')
-parser.add_argument("--num-classes", default=10, type=int)
+parser.add_argument("--num-classes", default=100, type=int)
 
 
 def eval(model, eval_loader, device, args):
@@ -71,9 +71,15 @@ def main():
         eval_dataset = datasets.CIFAR10(root="datasets", train=False, transform=eval_transforms,
                                         download=args.dataset_download)
     else:
+        # eval_transforms = transforms.Compose([
+        #     transforms.Resize((256, 256)),
+        #     transforms.CenterCrop(224),
+        #     transforms.ToTensor(),
+        #     transforms.Normalize(mean=((0.5071, 0.4867, 0.4408)), std=(0.2675, 0.2565, 0.2761))
+        # ])
         eval_transforms = transforms.Compose([
-            transforms.Resize((256, 256)),
-            transforms.CenterCrop(224),
+            # transforms.Resize((224, 224)),
+            # transforms.CenterCrop(224),
             transforms.ToTensor(),
             transforms.Normalize(mean=((0.5071, 0.4867, 0.4408)), std=(0.2675, 0.2565, 0.2761))
         ])
@@ -81,14 +87,25 @@ def main():
                                          download=args.dataset_download)
 
     # create dataloader
-    eval_loader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False)
-    model = timm.create_model(args.model, pretrained=False, num_classes=args.num_classes)
-    load_checkpoint(model, args.weight)
+    eval_loader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=True)
+    # model = timm.create_model(args.model, pretrained=False, num_classes=args.num_classes)
+    model = timm.create_model("hf_hub:edadaltocg/resnet18_cifar100", pretrained=False, num_classes=args.num_classes)
+    model.conv1 = nn.Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+    model.maxpool = nn.Identity()
+
+    model.load_state_dict(
+        torch.hub.load_state_dict_from_url(
+            "https://huggingface.co/edadaltocg/resnet18_cifar100/resolve/main/pytorch_model.bin",
+            map_location="cpu",
+            file_name="resnet18_cifar100.pth",
+        )
+    )
+    # load_checkpoint(model, args.weight)
     model.to(device)
 
     # evaluation
     top1, top5 = eval(model, eval_loader, device, args)
-    _logger.info(f'****** Evaluation finished. ACC@1 - {top1}, ACC@5 - {top5}. ******')
+    print(f'****** Evaluation finished. ACC@1 - {top1}, ACC@5 - {top5}. ******')
 
 
 if __name__ == "__main__":

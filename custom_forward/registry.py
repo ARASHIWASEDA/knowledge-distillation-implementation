@@ -18,4 +18,4 @@ def apply_new_method(model):
     method_dict = _custom_forward_dict[model.__class__]
     for method_name in method_dict:
         method = method_dict[method_name]
-        setattr(model, method_name, MethodType(method, model))
+        setattr(model, method_name, MethodType(method, model))  # todo
