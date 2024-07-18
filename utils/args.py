@@ -89,6 +89,13 @@ parser.add_argument("--thkd-blk-num", default=1, type=int)
 parser.add_argument("--thkd-gamma", default=1.5, type=float)
 parser.add_argument("--thkd-loss-weight", default=1., type=float)
 
+# CMTHKD settings
+parser.add_argument("--cmthkd-stages", nargs='+', default=[1, 2, 3, 4], type=int)
+parser.add_argument("--cmthkd-shallow-stages", nargs='+', default=[1], type=int)
+parser.add_argument("--cmthkd-temperature", default=4.0, type=float)
+parser.add_argument("--cmthkd-gamma", default=1.5, type=float)
+parser.add_argument("--cmthkd-loss-weight", default=1., type=float)
+
 
 def _load_config():
     config_parser = parser

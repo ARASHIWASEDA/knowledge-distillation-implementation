@@ -84,13 +84,12 @@ class OFAKD(BaseDistiller):
                     nn.Linear(feature_dim_s, self.args.num_classes)
                 )
             self.projector[str(stage)] = projector
-            self.projector.apply(init_weights)
+        self.projector.apply(init_weights)
 
     def forward(self, image, label):
         with torch.no_grad():
             self.teacher.eval()
             logits_teacher = self.teacher(image)
-
         logits_student, features_student = self.student(image, requires_feature=self.requires_feature)
 
         num_classes = logits_student.size(-1)

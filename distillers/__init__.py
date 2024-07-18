@@ -9,3 +9,4 @@ from .fitnet import FITNET
 from .ofakd import OFAKD
 from .rkd import RKD
 from .thkd import THKD
+from .cmthkd import CMTHKD

@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch
 import numpy as np
 
-from timm.models.layers import _assert, trunc_normal_
+from timm.models.layers import _assert, trunc_normal_, Mlp, DropPath
 
 
 class SepConv(nn.Module):
@@ -208,3 +208,121 @@ class PatchMerging(nn.Module):
         x = self.act(x)
 
         return x
+
+
+class CrossModelAttention(nn.Module):
+    def __init__(self,
+                 dim,
+                 num_heads=8,
+                 qkv_bias=False,
+                 qk_norm=False,
+                 attn_drop=0.,
+                 proj_drop=0.,
+                 norm_layer=nn.LayerNorm):
+        super().__init__()
+        assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        self.q = nn.Linear(dim, dim, bias=qkv_bias)
+        self.kv = nn.Linear(dim, 2 * dim, bias=qkv_bias)
+        self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, s, t):
+        B, N, C = s.shape
+        kv = self.kv(t).reshape(B, N, 2, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        k, v = kv.unbind(0)
+        q = self.q(s).reshape(B, N, 1, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q, k = self.q_norm(q), self.k_norm(k)
+        q = q * self.scale
+        attn = q @ k.transpose(-2, -1)
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+        x = attn @ v
+        x = x.transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+
+class CrossModelBlock(nn.Module):
+    def __init__(self,
+                 dim,
+                 num_heads=4,
+                 mlp_ratio=4,
+                 qkv_bias=False,
+                 qk_norm=False,
+                 proj_drop=0.,
+                 attn_drop=0.,
+                 drop_path=0.,
+                 act_layer=nn.GELU,
+                 norm_layer=nn.LayerNorm,
+                 mlp_layer=Mlp):
+        super().__init__()
+        self.norm1_s = norm_layer(dim)
+        self.norm1_t = norm_layer(dim)
+        self.attn = CrossModelAttention(
+            dim=dim,
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            qk_norm=qk_norm,
+            attn_drop=attn_drop,
+            proj_drop=proj_drop,
+            norm_layer=norm_layer
+        )
+        self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        self.mlp = mlp_layer(
+            in_features=dim,
+            hidden_features=int(dim * mlp_ratio),
+            act_layer=act_layer,
+            drop=proj_drop
+        )
+        self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+
+    def forward(self, s, t):
+        s = s + self.drop_path1(self.attn(self.norm1_s(s), self.norm1_t(t)))
+        s = s + self.drop_path2(self.mlp(self.norm2(s)))
+        return s
+
+
+class AdaptivePatchify(nn.Module):
+    def __init__(self, img_size=224, token_num=196, embed_dim=384, in_c=3, need_pe=False,
+                 norm_layer=None):
+        super(AdaptivePatchify, self).__init__()
+        self.img_size = img_size
+        self.grid_size = int(token_num ** 0.5)
+        self.embed_dim = embed_dim
+        self.in_chans = in_c
+        self.need_pe = need_pe
+        self.patch_size = self.img_size // self.grid_size
+        self.num_patches = self.grid_size ** 2
+        self.proj = nn.Conv2d(in_channels=self.in_chans,
+                              out_channels=self.embed_dim,
+                              kernel_size=self.patch_size,
+                              stride=self.patch_size)
+        self.norm = norm_layer(self.embed_dim) if norm_layer else nn.Identity()
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        if self.need_pe:
+            self.pe = torch.zeros((self.num_patches + 1), embed_dim)
+            for pos in range(self.num_patches + 1):
+                for i in range(self.embed_dim):
+                    if i % 2 == 0:
+                        self.pe[pos][i] = np.sin(pos / (10000 ** (i / embed_dim)))
+                    else:
+                        self.pe[pos][i] = np.cos(pos / (10000 ** ((i - 1) / embed_dim)))
+            self.pe = self.pe.unsqueeze(0)
+            self.pe = self.pe.cuda()
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        x = self.norm(x)
+        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
+        x = torch.cat((cls_token, x), dim=1)
+        return x + self.pe if self.need_pe else x

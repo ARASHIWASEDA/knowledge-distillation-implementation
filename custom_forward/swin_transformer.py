@@ -24,7 +24,7 @@ def forward(self, x, requires_feature=False):
         x, feat = self.forward_features(x, requires_feature)
         x = self.forward_head(x, pre_logits=True)
         feat.append(x)
-        x = self.head(x)
+        x = self.head.fc(x)
         return x, feat
     else:
         x = self.forward_features(x, False)
@@ -43,8 +43,8 @@ def forward_features(self, x, requires_feature):
         for layer in layers.blocks:
             x = layer(x)
             feat.append(x)
-        if layers.downsample is not None:
-            x = layers.downsample(x)
+            if layers.downsample is not None:
+                x = layers.downsample(x)
     x = self.norm(x)
     feat.append(x)
     return (x, feat) if requires_feature else x
