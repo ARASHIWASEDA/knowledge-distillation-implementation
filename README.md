@@ -13,7 +13,13 @@
 pip install -r requirements.txt
 ```
 
-### 算法支持情况
+### 算法运行
+
+```
+python trin.py --config configs/cifar100/resnet18_dist_vit_small.yaml
+```
+
+可以在config中修改默认超参数，可以配置的参数列表可以查看utils/args.py。
 
 目前支持的Hint-based的网络有：
 
