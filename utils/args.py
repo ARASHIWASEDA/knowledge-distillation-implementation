@@ -95,6 +95,7 @@ parser.add_argument("--cmthkd-shallow-stages", nargs='+', default=[1], type=int)
 parser.add_argument("--cmthkd-temperature", default=4.0, type=float)
 parser.add_argument("--cmthkd-gamma", default=1.5, type=float)
 parser.add_argument("--cmthkd-loss-weight", default=1., type=float)
+parser.add_argument("--cmthkd-blk-num", default=2, type=int)
 
 
 def _load_config():

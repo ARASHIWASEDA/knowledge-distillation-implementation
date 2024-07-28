@@ -36,15 +36,9 @@ def forward(self, x, requires_feature=False):
 def forward_features(self, x, requires_feature):
     feat = []
     x = self.patch_embed(x)
-    if self.absolute_pos_embed is not None:
-        x = x + self.absolute_pos_embed
-    x = self.pos_drop(x)
     for layers in self.layers:
-        for layer in layers.blocks:
-            x = layer(x)
-            feat.append(x)
-            if layers.downsample is not None:
-                x = layers.downsample(x)
+        x = layers(x)
+        feat.append(x)
     x = self.norm(x)
     feat.append(x)
     return (x, feat) if requires_feature else x
